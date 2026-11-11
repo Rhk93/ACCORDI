@@ -1,0 +1,36 @@
+plugins {
+    id 'com.android.application' version '8.5.2'
+}
+
+android {
+    namespace 'com.accordi.chitarra'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.accordi.chitarra'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        fisso {
+            storeFile file('chiave.keystore')
+            storePassword 'accordi123'
+            keyAlias 'accordi'
+            keyPassword 'accordi123'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.fisso
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}

@@ -80,13 +80,17 @@ public class MainActivity extends Activity {
 
     int tonica = 0;
     int tipo = 0;
+    boolean sezionePower = false;
     boolean inImpostazioni = false;
 
     final List<TextView> bottoniNote = new ArrayList<>();
     final List<TextView> bottoniTipi = new ArrayList<>();
     TextView titolo, nome, note;
     LinearLayout listaSchemi;
-    ScrollView scrollImpostazioni;
+    ScrollView scrollImpostazioni, scrollSchemi;
+    HorizontalScrollView scrollNote;
+    View boxTipi;
+    final List<TextView> bottoniSezioni = new ArrayList<>();
 
     static AudioTrack tracciaAttuale;
 
@@ -118,6 +122,7 @@ public class MainActivity extends Activity {
         colonne = limita(pref.getInt("colonne", 2), 1, 3);
         tonica = limita(pref.getInt("tonica", 0), 0, 11);
         tipo = limita(pref.getInt("tipo", 0), 0, Accordi.TIPI.length - 1);
+        sezionePower = pref.getBoolean("power", false);
         applica();
     }
 
@@ -128,6 +133,7 @@ public class MainActivity extends Activity {
             .putBoolean("orizzontale", orizzontale).putBoolean("mancino", mancino)
             .putBoolean("italiano", italiano).putInt("colonne", colonne)
             .putInt("tonica", tonica).putInt("tipo", tipo)
+            .putBoolean("power", sezionePower)
             .apply();
         applica();
     }
@@ -167,12 +173,29 @@ public class MainActivity extends Activity {
 
         LinearLayout testata = new LinearLayout(this);
         testata.setGravity(Gravity.CENTER_VERTICAL);
-        TextView app = testo("Accordi per Chitarra", 22, TESTO, true);
-        testata.addView(app, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout titoli = new LinearLayout(this);
+        titoli.setOrientation(LinearLayout.VERTICAL);
+        titoli.addView(testo("Accordi per Chitarra", 22, TESTO, true));
+        titoli.addView(testo("Classe chitarra Ignazio", 14, ACCENTO, true));
+        testata.addView(titoli, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView stile = bottone("⚙  Stile");
         stile.setOnClickListener(v -> mostraImpostazioni());
         testata.addView(stile);
         radice.addView(testata);
+
+        // Sezioni: tutti gli accordi / power chords
+        bottoniSezioni.clear();
+        LinearLayout rigaSezioni = new LinearLayout(this);
+        rigaSezioni.setPadding(0, dp(12), 0, 0);
+        TextView tutti = bottone("Tutti gli accordi");
+        tutti.setOnClickListener(v -> { sezionePower = false; salva(); aggiorna(); });
+        TextView power = bottone("⚡ Power Chords");
+        power.setOnClickListener(v -> { sezionePower = true; salva(); aggiorna(); });
+        bottoniSezioni.add(tutti);
+        bottoniSezioni.add(power);
+        rigaSezioni.addView(tutti);
+        rigaSezioni.addView(power);
+        radice.addView(scorrevole(rigaSezioni));
 
         radice.addView(etichetta("NOTA"));
         LinearLayout rigaNote = new LinearLayout(this);
@@ -183,9 +206,13 @@ public class MainActivity extends Activity {
             bottoniNote.add(b);
             rigaNote.addView(b);
         }
-        radice.addView(scorrevole(rigaNote));
+        scrollNote = scorrevole(rigaNote);
+        radice.addView(scrollNote);
 
-        radice.addView(etichetta("TIPO DI ACCORDO"));
+        LinearLayout tipiBox = new LinearLayout(this);
+        tipiBox.setOrientation(LinearLayout.VERTICAL);
+        boxTipi = tipiBox;
+        tipiBox.addView(etichetta("TIPO DI ACCORDO"));
         LinearLayout rigaTipi = new LinearLayout(this);
         for (int i = 0; i < Accordi.TIPI.length; i++) {
             final int t = i;
@@ -195,7 +222,8 @@ public class MainActivity extends Activity {
             bottoniTipi.add(b);
             rigaTipi.addView(b);
         }
-        radice.addView(scorrevole(rigaTipi));
+        tipiBox.addView(scorrevole(rigaTipi));
+        radice.addView(tipiBox);
 
         titolo = testo("", 34, ACCENTO, true);
         titolo.setPadding(0, dp(10), 0, 0);
@@ -207,6 +235,7 @@ public class MainActivity extends Activity {
         radice.addView(note);
 
         ScrollView scroll = new ScrollView(this);
+        scrollSchemi = scroll;
         listaSchemi = new LinearLayout(this);
         listaSchemi.setOrientation(LinearLayout.VERTICAL);
         listaSchemi.setPadding(0, 0, 0, dp(24));
@@ -220,6 +249,16 @@ public class MainActivity extends Activity {
     void aggiorna() {
         for (int i = 0; i < bottoniNote.size(); i++) evidenzia(bottoniNote.get(i), i == tonica);
         for (int i = 0; i < bottoniTipi.size(); i++) evidenzia(bottoniTipi.get(i), i == tipo);
+        evidenzia(bottoniSezioni.get(0), !sezionePower);
+        evidenzia(bottoniSezioni.get(1), sezionePower);
+        boxTipi.setVisibility(sezionePower ? View.GONE : View.VISIBLE);
+
+        // Porta al centro il pulsante della nota scelta
+        final TextView scelto = bottoniNote.get(tonica);
+        scrollNote.post(() -> scrollNote.smoothScrollTo(
+                scelto.getLeft() - (scrollNote.getWidth() - scelto.getWidth()) / 2, 0));
+
+        if (sezionePower) { aggiornaPower(); return; }
 
         Accordi.Tipo t = Accordi.TIPI[tipo];
         titolo.setText(Accordi.sigla(tonica, t));
@@ -250,11 +289,135 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ---------- Sezione Power Chords ----------
+
+    static Accordi.Tipo tipoPower() {
+        for (Accordi.Tipo t : Accordi.TIPI) if (t.sigla.equals("5")) return t;
+        return Accordi.TIPI[Accordi.TIPI.length - 1];
+    }
+
+    /** Tasto (0..11) della fondamentale sulla 6ª corda (Mi) o sulla 5ª corda (La). */
+    static int tastoPower(int ton, int corda) {
+        int vuota = corda == 6 ? 4 : 9;
+        return ((ton - vuota) % 12 + 12) % 12;
+    }
+
+    static Accordi.Posizione posPower(int ton, int corda, boolean treNote) {
+        Accordi.Posizione p = new Accordi.Posizione();
+        int f = tastoPower(ton, corda);
+        int s = corda == 6 ? 0 : 1;
+        for (int i = 0; i < 6; i++) { p.tasti[i] = -1; p.dita[i] = 0; }
+        p.tasti[s] = f;
+        p.tasti[s + 1] = f + 2;
+        if (treNote) p.tasti[s + 2] = f + 2;
+        if (f > 0) {
+            p.dita[s] = 1; p.dita[s + 1] = 3;
+            if (treNote) p.dita[s + 2] = 4;
+        } else {
+            p.dita[s + 1] = 1;
+            if (treNote) p.dita[s + 2] = 2;
+        }
+        int min = 99, max = 0;
+        for (int x : p.tasti) if (x > 0) { min = Math.min(min, x); max = Math.max(max, x); }
+        p.tastoMin = min;
+        p.tastoMax = max;
+        return p;
+    }
+
+    static String testoTasto(int f) {
+        return f == 0 ? "corda a vuoto" : "tasto " + f;
+    }
+
+    void aggiornaPower() {
+        Accordi.Tipo t = tipoPower();
+        titolo.setText(Accordi.sigla(tonica, t));
+        nome.setText(Accordi.TONICHE_IT[tonica] + " power chord (fondamentale + quinta)");
+        note.setText("Note: " + Accordi.note(tonica, t));
+        listaSchemi.removeAllViews();
+
+        int[] corde = {6, 5};
+        for (int corda : corde) {
+            int f = tastoPower(tonica, corda);
+            listaSchemi.addView(etichetta("FONDAMENTALE SULLA " + corda + "ª CORDA (" + (corda == 6 ? "MI BASSO" : "LA") + ")"));
+            TextView spiega = testo(Accordi.TONICHE[tonica] + " (" + Accordi.TONICHE_IT[tonica] + ") sulla " + corda
+                    + "ª corda: " + testoTasto(f) + ". La quinta e l'ottava stanno due tasti più su, sulle due corde sotto.",
+                    13, GRIGIO, false);
+            spiega.setPadding(dp(2), 0, dp(2), dp(6));
+            listaSchemi.addView(spiega);
+
+            List<View> schede = new ArrayList<>();
+            schede.add(scheda(posPower(tonica, corda, true), 0, t, true, "3 note (con l'ottava)"));
+            schede.add(scheda(posPower(tonica, corda, false), 1, t, true, "2 note"));
+            aggiungiInGriglia(schede);
+        }
+
+        listaSchemi.addView(etichetta("TUTTI I POWER CHORDS"));
+        TextView spiega = testo("Tocca una riga per vedere gli schemi. Stessa forma, si sposta solo il tasto.", 13, GRIGIO, false);
+        spiega.setPadding(dp(2), 0, dp(2), dp(6));
+        listaSchemi.addView(spiega);
+        listaSchemi.addView(rigaTabella("Accordo", "Sulla 6ª corda", "Sulla 5ª corda", false, true));
+        for (int i = 0; i < 12; i++) {
+            final int n = i;
+            View r = rigaTabella(Accordi.TONICHE[i] + "5 · " + Accordi.TONICHE_IT[i],
+                    testoTasto(tastoPower(i, 6)), testoTasto(tastoPower(i, 5)), i == tonica, false);
+            r.setOnClickListener(v -> {
+                tonica = n;
+                salva();
+                aggiorna();
+                scrollSchemi.post(() -> scrollSchemi.smoothScrollTo(0, 0));
+            });
+            listaSchemi.addView(r);
+        }
+    }
+
+    View rigaTabella(String a, String b, String c, boolean attiva, boolean intestazione) {
+        LinearLayout r = new LinearLayout(this);
+        r.setPadding(dp(10), dp(intestazione ? 4 : 10), dp(10), dp(intestazione ? 4 : 10));
+        if (!intestazione) r.setBackground(sfondoArrotondato(attiva ? ACCENTO : CARTA, 10));
+        int colTesto = attiva ? SU_ACCENTO : TESTO;
+        TextView ta = testo(a, intestazione ? 12 : 14, intestazione ? GRIGIO : (attiva ? SU_ACCENTO : ACCENTO), true);
+        TextView tb = testo(b, intestazione ? 12 : 14, intestazione ? GRIGIO : colTesto, intestazione);
+        TextView tc = testo(c, intestazione ? 12 : 14, intestazione ? GRIGIO : colTesto, intestazione);
+        r.addView(ta, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.1f));
+        r.addView(tb, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        r.addView(tc, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(2), 0, dp(2));
+        r.setLayoutParams(lp);
+        return r;
+    }
+
+    /** Mette le schede in righe da "colonne" elementi. */
+    void aggiungiInGriglia(List<View> schede) {
+        LinearLayout riga = null;
+        for (int i = 0; i < schede.size(); i++) {
+            if (i % colonne == 0) {
+                riga = new LinearLayout(this);
+                listaSchemi.addView(riga);
+            }
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            lp.setMargins(dp(4), dp(4), dp(4), dp(4));
+            riga.addView(schede.get(i), lp);
+        }
+        int resto = schede.size() % colonne;
+        if (resto != 0 && riga != null) {
+            for (int i = resto; i < colonne; i++) {
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, 1, 1f);
+                lp.setMargins(dp(4), dp(4), dp(4), dp(4));
+                riga.addView(new View(this), lp);
+            }
+        }
+    }
+
     int altezzaSchema() {
         return dp((orizzontale ? 125 : 200) * scalaImm);
     }
 
     View scheda(final Accordi.Posizione p, int indice, Accordi.Tipo t, boolean conSuona) {
+        return scheda(p, indice, t, conSuona, null);
+    }
+
+    View scheda(final Accordi.Posizione p, int indice, Accordi.Tipo t, boolean conSuona, String titoloScheda) {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
         c.setPadding(dp(8), dp(8), dp(8), dp(8));
@@ -263,7 +426,7 @@ public class MainActivity extends Activity {
         boolean vuote = false;
         for (int x : p.tasti) if (x == 0) vuote = true;
         String dove = (vuote || p.tastoMin <= 1) ? "Prima posizione" : "Dal " + p.tastoMin + "° tasto";
-        TextView intest = testo((indice + 1) + ". " + dove, 13, TESTO, true);
+        TextView intest = testo(titoloScheda != null ? titoloScheda : (indice + 1) + ". " + dove, 13, TESTO, true);
         intest.setGravity(Gravity.CENTER);
         c.addView(intest);
 
